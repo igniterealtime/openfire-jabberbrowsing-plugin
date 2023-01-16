@@ -173,7 +173,7 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
         // Use Service Discovery to identify the identity and features that are part of the browse result of the target.
         final Element infoElement = getDiscoInfo(target, requester);
         final String category = parseCategory(infoElement);
-        final String type = parseType(category, infoElement);
+        final String type = category == null ? null : parseType(category, infoElement);
         final String name = parseName(infoElement);
         final String version = getVersion(target, requester);
         final Set<String> namespaces = parseNamespaces(infoElement);
@@ -198,7 +198,7 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
             final Element childInfoElement = getDiscoInfo(jid, requester);
 
             final String childCategory = parseCategory(childInfoElement);
-            final String childType = parseType(childCategory, childInfoElement);
+            final String childType = childCategory == null ? null : parseType(childCategory, childInfoElement);
             final String childName = parseName(childInfoElement);
             final String childVersion = getVersion(jid, requester);
             final Set<String> childNamespaces = parseNamespaces(childInfoElement);

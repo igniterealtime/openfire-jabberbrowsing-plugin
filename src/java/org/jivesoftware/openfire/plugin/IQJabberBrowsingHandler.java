@@ -17,6 +17,7 @@ package org.jivesoftware.openfire.plugin;
 
 import org.dom4j.Element;
 import org.jivesoftware.openfire.IQHandlerInfo;
+import org.jivesoftware.openfire.IQRouter;
 import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.auth.UnauthorizedException;
 import org.jivesoftware.openfire.disco.IQDiscoInfoHandler;
@@ -27,11 +28,14 @@ import org.jivesoftware.openfire.handler.IQVersionHandler;
 import org.jivesoftware.util.JiveGlobals;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.xmpp.component.IQResultListener;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.JID;
 import org.xmpp.packet.PacketError;
 
 import java.util.*;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * An IQ Handler that processes IQ requests sent to the server that contain queries related to the protocol described
@@ -216,7 +220,19 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
         itemsRequest.setFrom(requester);
         itemsRequest.setChildElement("query", IQDiscoItemsHandler.NAMESPACE_DISCO_ITEMS);
 
-        final IQ itemsResponse = XMPPServer.getInstance().getIQDiscoItemsHandler().handleIQ(itemsRequest);
+        // Obtain an IQ response. For internal components, we can short-cut through the local handler. For external components, perform an actual XMPP query.
+        final IQ itemsResponse;
+        if (XMPPServer.getInstance().getServerInfo().getXMPPDomain().equals(target.toString()) || sessionManager.getComponentSession(target.getDomain()) == null) {
+            itemsResponse = XMPPServer.getInstance().getIQDiscoItemsHandler().handleIQ(itemsRequest);
+        } else {
+            itemsResponse = queryExternal(itemsRequest);
+        }
+
+        if (itemsResponse == null) {
+            Log.debug("disco#items request was not responded to by: {}", target);
+            return Collections.emptySet();
+        }
+
         if (itemsResponse.getError() != null) {
             return Collections.emptySet();
         }
@@ -237,7 +253,19 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
         infoRequest.setFrom(requester);
         infoRequest.setChildElement("query", IQDiscoInfoHandler.NAMESPACE_DISCO_INFO);
 
-        final IQ infoResponse = XMPPServer.getInstance().getIQDiscoInfoHandler().handleIQ(infoRequest);
+        // Obtain an IQ response. For internal components, we can short-cut through the local handler. For external components, perform an actual XMPP query.
+        final IQ infoResponse;
+        if (XMPPServer.getInstance().getServerInfo().getXMPPDomain().equals(target.toString()) || sessionManager.getComponentSession(target.getDomain()) == null) {
+            infoResponse = XMPPServer.getInstance().getIQDiscoItemsHandler().handleIQ(infoRequest);
+        } else {
+            infoResponse = queryExternal(infoRequest);
+        }
+
+        if (infoResponse == null) {
+            Log.debug("disco#info request was not responded to by: {}", target);
+            return null;
+        }
+
         if (infoResponse.getError() != null) {
             return null;
         }
@@ -258,7 +286,19 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
         versionRequest.setFrom(requester);
         versionRequest.setChildElement("query", "jabber:iq:version");
 
-        final IQ versionResponse = new IQVersionHandler().handleIQ(versionRequest);
+        // Obtain an IQ response. For internal components, we can short-cut through the local handler. For external components, perform an actual XMPP query.
+        final IQ versionResponse;
+        if (XMPPServer.getInstance().getServerInfo().getXMPPDomain().equals(target.toString()) || sessionManager.getComponentSession(target.getDomain()) == null) {
+            versionResponse = XMPPServer.getInstance().getIQDiscoItemsHandler().handleIQ(versionRequest);
+        } else {
+            versionResponse = queryExternal(versionRequest);
+        }
+
+        if (versionResponse == null) {
+            Log.debug("disco#info request was not responded to by: {}", target);
+            return null;
+        }
+
         if (versionResponse.getError() != null) {
             return null;
         }
@@ -274,6 +314,38 @@ public class IQJabberBrowsingHandler extends IQHandler implements ServerFeatures
         }
         final String versionValue = version.getTextTrim();
         return versionValue == null || versionValue.isEmpty() ? null : versionValue;
+    }
+
+    /**
+     * Sends an IQ request and blocks for the response to be returned, or a timeout occurs.
+     *
+     * @param request The IQ request
+     * @return the IQ response, or null.
+     */
+    public static IQ queryExternal(final IQ request)
+    {
+        if (!request.isRequest()) {
+            throw new IllegalArgumentException("Argument 'request' must be an IQ request (but was not).");
+        }
+        Log.trace("Querying external entity: {}", request.getTo());
+        final LinkedBlockingQueue<IQ> answer = new LinkedBlockingQueue<>(8);
+        final IQRouter iqRouter = XMPPServer.getInstance().getIQRouter();
+        iqRouter.addIQResultListener(request.getID(), new IQResultListener() {
+            public void receivedAnswer(IQ packet) {
+                answer.offer(packet);
+            }
+
+            public void answerTimeout(String packetId) {
+                Log.warn("An answer to a previously sent IQ stanza was never received. Target: {}", request.getTo());
+            }
+        });
+
+        iqRouter.route(request);
+        try {
+            return answer.poll(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+        }
+        return null;
     }
 
     public static String parseCategory(final Element discoInfoElement)

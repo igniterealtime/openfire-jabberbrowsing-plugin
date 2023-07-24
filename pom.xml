@@ -8,7 +8,7 @@
     </parent>
     <groupId>org.igniterealtime.openfire.plugins</groupId>
     <artifactId>jabberbrowsing</artifactId>
-    <version>1.0.1-SNAPSHOT</version>
+    <version>1.0.1</version>
     <name>Jabber Browsing Plugin</name>
     <description>This plugin implements the (obsolete!) XEP-0011 'Jabber Browsing' specification for service discovery using the jabber:iq:browse namespace.</description>
 
